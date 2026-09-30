@@ -11,7 +11,314 @@ import org.apache.spark.sql.functions._
 // ============================================================
 
 
+// ------------------------------------------------------------
+// 1. File Paths
+// ------------------------------------------------------------
 
+val basePath = "C:/IT462/UNSW_NB15"
+
+val file1Path = s"$basePath/UNSW-NB15_1.csv"
+val file2Path = s"$basePath/UNSW-NB15_2.csv"
+val file3Path = s"$basePath/UNSW-NB15_3.csv"
+val file4Path = s"$basePath/UNSW-NB15_4.csv"
+
+val featuresPath = s"$basePath/NUSW-NB15_features.csv"
+
+
+// ------------------------------------------------------------
+// 2. Load Feature Description File
+// ------------------------------------------------------------
+
+val featuresDF = spark.read
+  .option("header", "true")
+  .option("inferSchema", "true")
+  .csv(featuresPath)
+
+val featuresClean = featuresDF.toDF(
+  "No",
+  "Name",
+  "Type",
+  "Description"
+)
+
+println("Number of documented features:")
+println(featuresClean.count())
+
+
+// Extract the feature names in their correct order.
+
+val columnNames = featuresClean
+  .orderBy("No")
+  .select("Name")
+  .collect()
+  .map(_.getString(0))
+
+
+// Clean spaces in column names.
+// Example: ct_src_ ltm --> ct_src_ltm
+
+val cleanColumnNames =
+  columnNames.map(_.trim.replaceAll("\\s+", "_"))
+
+val finalColumnNames =
+  cleanColumnNames.map(_.replaceAll("_+", "_"))
+
+
+// Verify that 49 unique column names remain.
+
+println("Number of column names:")
+println(finalColumnNames.length)
+
+println("Number of unique column names:")
+println(finalColumnNames.distinct.length)
+
+
+// ------------------------------------------------------------
+// 3. Load the Four Raw UNSW-NB15 Files
+// ------------------------------------------------------------
+
+def loadAndName(path: String) = {
+  spark.read
+    .option("header", "false")
+    .csv(path)
+    .toDF(finalColumnNames: _*)
+}
+
+val file1Named = loadAndName(file1Path)
+val file2Named = loadAndName(file2Path)
+val file3Named = loadAndName(file3Path)
+val file4Named = loadAndName(file4Path)
+
+
+// ------------------------------------------------------------
+// 4. Schema Validation
+// ------------------------------------------------------------
+
+println("File 1 columns: " + file1Named.columns.length)
+println("File 2 columns: " + file2Named.columns.length)
+println("File 3 columns: " + file3Named.columns.length)
+println("File 4 columns: " + file4Named.columns.length)
+
+println(
+  "File 2 schema matches File 1: " +
+  (file2Named.schema == file1Named.schema)
+)
+
+println(
+  "File 3 schema matches File 1: " +
+  (file3Named.schema == file1Named.schema)
+)
+
+println(
+  "File 4 schema matches File 1: " +
+  (file4Named.schema == file1Named.schema)
+)
+
+file1Named.printSchema()
+
+
+// ------------------------------------------------------------
+// 5. Initial File Profiling
+// ------------------------------------------------------------
+
+val file1Rows = file1Named.count()
+val file2Rows = file2Named.count()
+val file3Rows = file3Named.count()
+val file4Rows = file4Named.count()
+
+println("File 1 rows: " + file1Rows)
+println("File 2 rows: " + file2Rows)
+println("File 3 rows: " + file3Rows)
+println("File 4 rows: " + file4Rows)
+
+
+// Label = 0 -> Normal
+// Label = 1 -> Attack
+
+println("File 1 Label distribution:")
+file1Named
+  .groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+println("File 2 Label distribution:")
+file2Named
+  .groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+println("File 3 Label distribution:")
+file3Named
+  .groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+println("File 4 Label distribution:")
+file4Named
+  .groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+
+// ------------------------------------------------------------
+// 6. Integrate the Four Files
+// ------------------------------------------------------------
+
+val combinedAllDF =
+  file1Named
+    .unionByName(file2Named)
+    .unionByName(file3Named)
+    .unionByName(file4Named)
+
+
+// Verify integrated dataset size.
+
+val combinedRows = combinedAllDF.count()
+val combinedColumns = combinedAllDF.columns.length
+
+println("Combined rows: " + combinedRows)
+println("Combined columns: " + combinedColumns)
+
+
+// Target distribution after integration.
+
+println("Combined Label distribution:")
+
+combinedAllDF
+  .groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+
+// Display a small sample.
+
+combinedAllDF
+  .select(
+    "srcip",
+    "sport",
+    "dstip",
+    "proto",
+    "dur",
+    "attack_cat",
+    "Label"
+  )
+  .show(10, false)
+
+
+// ------------------------------------------------------------
+// 7. Initial Data-Quality Profiling
+// ------------------------------------------------------------
+
+// This section detects issues only.
+// No cleaning or removal is performed here.
+
+val nullCounts = combinedAllDF.select(
+  combinedAllDF.columns.map { c =>
+    sum(
+      when(
+        col(c).isNull || trim(col(c)) === "",
+        1
+      ).otherwise(0)
+    ).alias(c)
+  }: _*
+)
+
+println("Missing / empty values per attribute:")
+nullCounts.show(false)
+
+
+// Service distribution.
+
+println("Service distribution:")
+
+combinedAllDF
+  .groupBy("service")
+  .count()
+  .orderBy(desc("count"))
+  .show(30, false)
+
+
+// State distribution.
+
+println("State distribution:")
+
+combinedAllDF
+  .groupBy("state")
+  .count()
+  .orderBy(desc("count"))
+  .show(50, false)
+
+
+// Inspect unusual state value "no".
+
+println("Records where state = no:")
+
+combinedAllDF
+  .filter(col("state") === "no")
+  .show(20, false)
+
+
+// Raw attack category distribution.
+
+println("Raw attack category distribution:")
+
+combinedAllDF
+  .groupBy("attack_cat")
+  .count()
+  .orderBy(desc("count"))
+  .show(30, false)
+
+
+// Temporary trim for inspection only.
+// combinedAllDF itself is NOT modified.
+
+println("Attack categories after temporary trim for inspection:")
+
+combinedAllDF
+  .groupBy(
+    trim(col("attack_cat")).alias("attack_cat_trimmed")
+  )
+  .count()
+  .orderBy(desc("count"))
+  .show(30, false)
+
+
+// Check relationship between Label and attack_cat.
+
+println("Label / Attack Category relationship:")
+
+combinedAllDF
+  .groupBy("Label", "attack_cat")
+  .count()
+  .orderBy(col("Label"), desc("count"))
+  .show(30, false)
+
+
+// Protocol distribution.
+
+println("Most common protocols:")
+
+combinedAllDF
+  .groupBy("proto")
+  .count()
+  .orderBy(desc("count"))
+  .show(50, false)
+
+
+// Number of unique protocol categories.
+
+val protocolCount =
+  combinedAllDF
+    .select("proto")
+    .distinct()
+    .count()
+
+println("Number of distinct protocols: " + protocolCount)
 
 
 
