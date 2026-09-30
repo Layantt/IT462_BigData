@@ -625,7 +625,8 @@ val indexedDF = indexerState.fit(
 val finalDF = indexedDF.drop("proto", "service", "state")
 
 // 4. Output Snapshot (15 Rows)
-finalDF.select("dur", "sbytes", "dbytes", "total_bytes", "total_pkts", "byte_ratio", "proto_indexed", "service_indexed", "state_indexed", "Label").show(15, false)
+// Note: Selected columns correspond directly to Figure 3 in the report
+indexedDF.select("proto", "service", "state", "dur", "sbytes", "dbytes", "total_bytes", "total_pkts", "byte_ratio", "Label").show(15, false)
 
 // 5. Save Final Preprocessed Parquet Dataset
 finalDF.write.mode("overwrite").parquet("preprocessed_dataset.parquet")
