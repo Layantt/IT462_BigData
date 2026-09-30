@@ -411,7 +411,66 @@ girl2DF
 // ============================================================
 // MEMBER 4 - Data Reduction and Feature Selection
 // ============================================================
+import org.apache.spark.sql.functions._
 
+// Load Girl 3 cleaned dataset
+val df = spark.read
+  .option("header", "true")
+  .option("inferSchema", "false")
+  .csv("C:/Users/asanv/Downloads/last semester/Big data system 462/Project/BigData Project/girl3_cleaned.csv")
+
+// Verify input size
+println("Rows before reduction: " + df.count())
+println("Columns before reduction: " + df.columns.length)
+
+// Check class distribution
+df.groupBy("Label")
+  .count()
+  .orderBy("Label")
+  .show()
+
+// Check relationship between attack_cat and Label
+df.groupBy("attack_cat", "Label")
+  .count()
+  .orderBy("attack_cat", "Label")
+  .show(30, false)
+
+// Check distinct values for selected categorical/identifier columns
+Seq("srcip", "dstip", "proto", "service", "state").foreach { c =>
+  println(c + " -> " + df.select(c).distinct().count())
+}
+
+// Analyze source IP association with class label
+val srcLabelSummary = df
+  .groupBy("srcip")
+  .agg(countDistinct("Label").alias("label_count"))
+
+srcLabelSummary
+  .groupBy("label_count")
+  .count()
+  .orderBy("label_count")
+  .show()
+
+// Analyze destination IP association with class label
+val dstLabelSummary = df
+  .groupBy("dstip")
+  .agg(countDistinct("Label").alias("label_count"))
+
+dstLabelSummary
+  .groupBy("label_count")
+  .count()
+  .orderBy("label_count")
+  .show()
+
+// Feature selection
+// Removed:
+// attack_cat -> direct target leakage
+// srcip, dstip -> testbed-specific endpoint memorization risk
+val reducedDF = df.drop("attack_cat", "srcip", "dstip")
+
+// Verify output size
+println("Rows after reduction: " + reducedDF.count())
+println("Columns after reduction: " + reducedDF.columns.length)
 
 
 
