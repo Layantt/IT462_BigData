@@ -419,5 +419,65 @@ girl2DF
 
 
 // ============================================================
-// MEMBER 5 - Modeling and Evaluation
+// MEMBER 5 - Transformation, Feature Engineering & Final Parquet
 // ============================================================
+
+import org.apache.spark.ml.feature.StringIndexer
+import org.apache.spark.sql.types._
+
+// 1. Explicit Type Casting (Official UNSW-NB15 Schema)
+// Note: If running sequentially from Member 4, use its resulting DataFrame (e.g., girl4_reduced)
+val inputDF = spark.read.option("header", "true").csv("girl4_reduced.csv")
+
+val castedDF = inputDF
+  .withColumn("dur", col("dur").cast(DoubleType))
+  .withColumn("sload", col("sload").cast(DoubleType))
+  .withColumn("dload", col("dload").cast(DoubleType))
+  .withColumn("sinpkt", col("sinpkt").cast(DoubleType))
+  .withColumn("dinpkt", col("dinpkt").cast(DoubleType))
+  .withColumn("tcprtt", col("tcprtt").cast(DoubleType))
+  .withColumn("synack", col("synack").cast(DoubleType))
+  .withColumn("ackdat", col("ackdat").cast(DoubleType))
+  .withColumn("spkts", col("spkts").cast(IntegerType))
+  .withColumn("dpkts", col("dpkts").cast(IntegerType))
+  .withColumn("sport", col("sport").cast(IntegerType))
+  .withColumn("dsport", col("dsport").cast(IntegerType))
+  .withColumn("sttl", col("sttl").cast(IntegerType))
+  .withColumn("dttl", col("dttl").cast(IntegerType))
+  .withColumn("sloss", col("sloss").cast(IntegerType))
+  .withColumn("dloss", col("dloss").cast(IntegerType))
+  .withColumn("sbytes", col("sbytes").cast(LongType))
+  .withColumn("dbytes", col("dbytes").cast(LongType))
+  .withColumn("res_bdy_len", col("res_bdy_len").cast(LongType))
+  .withColumn("ct_flw_http_mthd", col("ct_flw_http_mthd").cast(IntegerType))
+  .withColumn("is_ftp_login", col("is_ftp_login").cast(IntegerType))
+  .withColumn("ct_ftp_cmd", col("ct_ftp_cmd").cast(IntegerType))
+  .withColumn("Stime", col("Stime").cast(LongType).cast(TimestampType))
+  .withColumn("Ltime", col("Ltime").cast(LongType).cast(TimestampType))
+  .withColumn("is_sm_ips_ports", col("is_sm_ips_ports").cast(IntegerType))
+  .withColumn("Label", col("Label").cast(IntegerType))
+
+// 2. Feature Engineering
+val engineeredDF = castedDF
+  .withColumn("total_bytes", col("sbytes") + col("dbytes"))
+  .withColumn("total_pkts", col("spkts") + col("dpkts"))
+  .withColumn("byte_ratio", col("sbytes") / (col("total_bytes") + 1.0))
+
+// 3. Preparatory Categorical Encoding (StringIndexer)
+val indexerProto = new StringIndexer().setInputCol("proto").setOutputCol("proto_indexed").setHandleInvalid("keep")
+val indexerService = new StringIndexer().setInputCol("service").setOutputCol("service_indexed").setHandleInvalid("keep")
+val indexerState = new StringIndexer().setInputCol("state").setOutputCol("state_indexed").setHandleInvalid("keep")
+
+val indexedDF = indexerState.fit(
+  indexerService.fit(
+    indexerProto.fit(engineeredDF).transform(engineeredDF)
+  ).transform(engineeredDF)
+).transform(engineeredDF)
+
+val finalDF = indexedDF
+
+// 4. Output Snapshot (15 Rows)
+finalDF.select("proto", "service", "state", "dur", "sbytes", "dbytes", "total_bytes", "total_pkts", "byte_ratio", "Label").show(15, false)
+
+// 5. Save Final Preprocessed Parquet Dataset
+finalDF.write.mode("overwrite").parquet("preprocessed_dataset.parquet")
