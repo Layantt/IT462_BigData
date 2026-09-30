@@ -571,9 +571,9 @@ println("Columns after reduction: " + reducedDF.columns.length)
 
 import org.apache.spark.ml.feature.StringIndexer
 import org.apache.spark.sql.types._
+import org.apache.spark.sql.functions._
 
 // 1. Explicit Type Casting (Official UNSW-NB15 Schema)
-// Note: If running sequentially from Member 4, use its resulting DataFrame (e.g., girl4_reduced)
 val inputDF = spark.read.option("header", "true").csv("girl4_reduced.csv")
 
 val castedDF = inputDF
@@ -621,10 +621,11 @@ val indexedDF = indexerState.fit(
   ).transform(engineeredDF)
 ).transform(engineeredDF)
 
-val finalDF = indexedDF
+// Drop original string columns to maintain exactly 49 features
+val finalDF = indexedDF.drop("proto", "service", "state")
 
 // 4. Output Snapshot (15 Rows)
-finalDF.select("proto", "service", "state", "dur", "sbytes", "dbytes", "total_bytes", "total_pkts", "byte_ratio", "Label").show(15, false)
+finalDF.select("dur", "sbytes", "dbytes", "total_bytes", "total_pkts", "byte_ratio", "proto_indexed", "service_indexed", "state_indexed", "Label").show(15, false)
 
 // 5. Save Final Preprocessed Parquet Dataset
 finalDF.write.mode("overwrite").parquet("preprocessed_dataset.parquet")
