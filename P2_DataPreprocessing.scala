@@ -402,12 +402,104 @@ girl2DF
 // MEMBER 3 - Duplicates and Outliers
 // ============================================================
 
+import org.apache.spark.sql.functions._
+
+// ------------------------------------------------------------
+// 1. Duplicate Records
+// ------------------------------------------------------------
+
+val beforeDuplicateRows = cleanedDF.count()
+
+val deduplicatedDF = cleanedDF.dropDuplicates()
+
+val afterDuplicateRows = deduplicatedDF.count()
+val duplicatesRemoved = beforeDuplicateRows - afterDuplicateRows
+
+println("Rows before duplicate removal: " + beforeDuplicateRows)
+println("Duplicate records removed: " + duplicatesRemoved)
+println("Rows after duplicate removal: " + afterDuplicateRows)
 
 
+// ------------------------------------------------------------
+// 2. Outlier Analysis using IQR
+// ------------------------------------------------------------
+
+val analysisDF = deduplicatedDF
+
+val outlierCols = Seq(
+  "dur", "sbytes", "dbytes",
+  "Spkts", "Dpkts",
+  "Sload", "Dload",
+  "Sjit", "Djit",
+  "Sintpkt", "Dintpkt",
+  "tcprtt", "synack", "ackdat"
+)
+
+def outlierStats(columnName: String) = {
+
+  val quantiles = analysisDF.stat.approxQuantile(
+    columnName,
+    Array(0.25, 0.75),
+    0.01
+  )
+
+  val q1 = quantiles(0)
+  val q3 = quantiles(1)
+  val iqr = q3 - q1
+
+  val lowerBound = q1 - 1.5 * iqr
+  val upperBound = q3 + 1.5 * iqr
+
+  val outlierCount = analysisDF
+    .filter(
+      col(columnName) < lowerBound ||
+      col(columnName) > upperBound
+    )
+    .count()
+
+  (columnName, q1, q3, lowerBound, upperBound, outlierCount)
+}
+
+val outlierResults = outlierCols.map(outlierStats)
+
+val totalRows = analysisDF.count()
+
+outlierResults.foreach {
+  case (name, q1, q3, lower, upper, count) =>
+
+    val percentage = count.toDouble / totalRows * 100
+
+    println(
+      s"$name: Q1=$q1, Q3=$q3, " +
+      s"Lower=$lower, Upper=$upper, " +
+      s"Outliers=$count, Percentage=$percentage%"
+    )
+}
 
 
+// ------------------------------------------------------------
+// 3. Rows with at Least One Outlier
+// ------------------------------------------------------------
+
+val outlierConditions = outlierResults.map {
+  case (name, q1, q3, lower, upper, count) =>
+    col(name) < lower || col(name) > upper
+}
+
+val anyOutlierCondition = outlierConditions.reduce(_ || _)
+
+val rowsWithAnyOutlier =
+  analysisDF.filter(anyOutlierCondition).count()
+
+val outlierPercentage =
+  rowsWithAnyOutlier.toDouble / totalRows * 100
+
+println("Rows with at least one outlier = " + rowsWithAnyOutlier)
+println("Percentage = " + outlierPercentage + "%")
 
 
+// Outliers are retained because extreme network traffic values
+// may contain meaningful attack-related information.
 // ============================================================
 // MEMBER 4 - Data Reduction and Feature Selection
 // ============================================================
@@ -471,10 +563,6 @@ val reducedDF = df.drop("attack_cat", "srcip", "dstip")
 // Verify output size
 println("Rows after reduction: " + reducedDF.count())
 println("Columns after reduction: " + reducedDF.columns.length)
-
-
-
-
 
 
 // ============================================================
