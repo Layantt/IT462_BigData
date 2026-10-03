@@ -26,7 +26,11 @@ val distribution = labelCounts.collect()
 
 println("Total records: " + totalRecords)
 distribution.foreach(println)
-Sample Results
+
+
+
+
+##Sample Results
 Normal (Label 0): 1,959,771
 Attack (Label 1): 99,643
 Total Records: 2,059,414
