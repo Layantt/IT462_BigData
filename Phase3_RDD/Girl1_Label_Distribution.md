@@ -28,15 +28,13 @@ println("Total records: " + totalRecords)
 distribution.foreach(println)
 
 
+## Sample Results
+Normal (Label 0): 1,959,771  
+Attack (Label 1): 99,643  
+Total Records: 2,059,414  
 
-
-##Sample Results
-Normal (Label 0): 1,959,771
-Attack (Label 1): 99,643
-Total Records: 2,059,414
-Insight
+## Insight
 The final preprocessed dataset contains a much larger number of Normal records than Attack records, indicating a strong class imbalance. This imbalance should be considered during the machine learning phase because it may affect model training and evaluation.
 
-
-
+## Sample Output
 ![Label Distribution Output](Girl1_Label_Distribution_Output.png)
