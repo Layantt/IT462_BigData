@@ -28,6 +28,7 @@ println("Total records: " + totalRecords)
 distribution.foreach(println)
 
 
+ 
 ## Sample Results
 Normal (Label 0): 1,959,771  
 Attack (Label 1): 99,643  
