@@ -29,3 +29,21 @@ val sortedProtocolRDD =
     .sortBy(_._2, ascending = false)
 
 sortedProtocolRDD.take(10)
+
+##Sample Results
+Number of distinct protocols: 135
+
+Top 10 protocols:
+- tcp: 1,448,858
+- udp: 588,026
+- arp: 6,658
+- unas: 4,765
+- ospf: 3,964
+- icmp: 498
+- sctp: 444
+- any: 138
+- gre: 95
+- rsvp: 92
+
+##Insight
+The final preprocessed dataset contains 135 distinct network protocols. TCP and UDP are the most frequently occurring protocols, accounting for the vast majority of the network traffic.
