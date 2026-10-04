@@ -8,6 +8,8 @@ Transformations: map, distinct, reduceByKey, sortBy
 Actions: count, take
 
 ## Scala Code
+
+```scala
 val protoRDD = finalDF
   .select("proto")
   .rdd
