@@ -1,0 +1,134 @@
+// ==========================================
+// Phase 4 - Spark SQL Operations
+// UNSW-NB15 Cyber Attack Detection
+// ==========================================
+
+// Load the final preprocessed dataset
+val df = spark.read.parquet(
+  "C:/Users/HUAWEI/Downloads/preprocessed_dataset.parquet/preprocessed_dataset.parquet"
+)
+
+// Display the schema
+df.printSchema()
+
+// Register DataFrame as a temporary SQL view
+df.createOrReplaceTempView("network_data")
+
+
+// ==========================================
+// Query 1: Attack Rate by Protocol
+// ==========================================
+
+val q1Filtered = spark.sql("""
+SELECT
+    proto,
+    COUNT(*) AS total_records,
+    SUM(CASE WHEN CAST(Label AS INT) = 1 THEN 1 ELSE 0 END) AS attack_records,
+    ROUND(
+        100.0 * SUM(CASE WHEN CAST(Label AS INT) = 1 THEN 1 ELSE 0 END) / COUNT(*),
+        2
+    ) AS attack_rate
+FROM network_data
+GROUP BY proto
+HAVING COUNT(*) >= 100
+ORDER BY attack_rate DESC, total_records DESC
+LIMIT 10
+""")
+
+q1Filtered.show(false)
+
+
+// ==========================================
+// Query 2: Top Destination Ports in Attack Traffic
+// ==========================================
+
+val q2 = spark.sql("""
+SELECT
+    dsport,
+    COUNT(*) AS attack_count
+FROM network_data
+WHERE CAST(Label AS INT) = 1
+GROUP BY dsport
+ORDER BY attack_count DESC
+LIMIT 10
+""")
+
+q2.show(false)
+
+
+// ==========================================
+// Query 3: Traffic Volume - Normal vs Attack
+// ==========================================
+
+val q3 = spark.sql("""
+SELECT
+    CAST(Label AS INT) AS label,
+    COUNT(*) AS total_records,
+    ROUND(AVG(CAST(total_bytes AS DOUBLE)), 2) AS avg_total_bytes,
+    ROUND(AVG(CAST(total_pkts AS DOUBLE)), 2) AS avg_total_pkts,
+    SUM(CAST(total_bytes AS DOUBLE)) AS total_bytes_sum
+FROM network_data
+GROUP BY CAST(Label AS INT)
+ORDER BY label
+""")
+
+q3.show(false)
+
+
+// ==========================================
+// Query 4: High-Risk Services
+// ==========================================
+
+val q4 = spark.sql("""
+WITH service_stats AS (
+    SELECT
+        service,
+        COUNT(*) AS total_records,
+        SUM(
+            CASE WHEN CAST(Label AS INT) = 1
+            THEN 1 ELSE 0 END
+        ) AS attack_records
+    FROM network_data
+    WHERE service IS NOT NULL
+        AND TRIM(service) <> ''
+        AND service <> '-'
+    GROUP BY service
+)
+SELECT
+    service,
+    total_records,
+    attack_records,
+    ROUND(100.0 * attack_records / total_records, 2) AS attack_rate
+FROM service_stats
+ORDER BY attack_rate DESC, total_records DESC
+LIMIT 10
+""")
+
+q4.show(false)
+
+
+// ==========================================
+// Query 5: Ranked Attack Services
+// ==========================================
+
+val q5 = spark.sql("""
+WITH attack_services AS (
+    SELECT
+        service,
+        COUNT(*) AS attack_count
+    FROM network_data
+    WHERE CAST(Label AS INT) = 1
+        AND service IS NOT NULL
+        AND TRIM(service) <> ''
+        AND service <> '-'
+    GROUP BY service
+)
+SELECT
+    service,
+    attack_count,
+    DENSE_RANK() OVER (ORDER BY attack_count DESC) AS service_rank
+FROM attack_services
+ORDER BY service_rank, service
+""")
+
+q5.show(false)
