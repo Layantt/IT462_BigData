@@ -4,9 +4,7 @@
 // ==========================================
 
 // Load the final preprocessed dataset
-val df = spark.read.parquet(
-  "C:/Users/HUAWEI/Downloads/preprocessed_dataset.parquet/preprocessed_dataset.parquet"
-)
+val df = spark.read.parquet("LOCAL_PATH/preprocessed_dataset.parquet")
 
 // Display the schema
 df.printSchema()
