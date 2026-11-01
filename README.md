@@ -1,4 +1,4 @@
-IT462 Big Data Project | UNSW-NB15 Network Traffic Analysis<p align="center">
+# IT462 Big Data Project | UNSW-NB15 Network Traffic Analysis
   <img alt="Scala" src="https://img.shields.io/badge/Scala-DC322F?style=for-the-badge&logo=scala&logoColor=white" />
   <img alt="Apache Spark" src="https://img.shields.io/badge/Apache_Spark-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white" />
   <img alt="Spark SQL" src="https://img.shields.io/badge/Spark_SQL-2D3748?style=for-the-badge&logo=apachespark&logoColor=white" />
