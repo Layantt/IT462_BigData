@@ -62,9 +62,9 @@ val q3 = spark.sql("""
 SELECT
     CAST(Label AS INT) AS label,
     COUNT(*) AS total_records,
-    ROUND(AVG(CAST(total_bytes AS DOUBLE)), 2) AS avg_total_bytes,
-    ROUND(AVG(CAST(total_pkts AS DOUBLE)), 2) AS avg_total_pkts,
-    SUM(CAST(total_bytes AS DOUBLE)) AS total_bytes_sum
+    ROUND(AVG(CAST(sbytes AS DOUBLE)), 2) AS avg_total_bytes,
+    ROUND(AVG(CAST(spkts AS DOUBLE)), 2) AS avg_total_pkts,
+    SUM(CAST(sbytes AS BIGINT)) AS total_bytes_sum
 FROM network_data
 GROUP BY CAST(Label AS INT)
 ORDER BY label
