@@ -1,0 +1,146 @@
+// =====================================================
+// Phase 5 - Machine Learning with Spark
+// UNSW-NB15 Cyber Attack Detection
+// =====================================================
+
+
+// =====================================================
+// Girl 1 - Data Preparation and Train/Test Split
+// =====================================================
+
+// Girl 1 code goes here
+// This section creates the shared:
+// trainDF
+// testDF
+
+
+// =====================================================
+// Girl 2 - Feature Preparation Pipeline
+// =====================================================
+
+// Girl 2 code goes here
+// This section prepares the ML feature pipeline
+// using the training data and applies it to the test data.
+
+
+
+// =====================================================
+// Girl 3 - Majority-Class Baseline
+// =====================================================
+
+import org.apache.spark.sql.functions._
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+
+// -----------------------------------------------------
+// Identify the majority class from the training set
+// -----------------------------------------------------
+
+val trainCounts =
+  trainDF
+    .groupBy("label")
+    .count()
+    .orderBy(desc("count"))
+
+trainCounts.show(false)
+
+
+// The most frequent class is used as the baseline
+// prediction for every test record.
+
+val majorityLabel =
+  trainCounts.first().getDouble(0)
+
+println("Majority label = " + majorityLabel)
+
+
+// -----------------------------------------------------
+// Create majority-class baseline predictions
+// -----------------------------------------------------
+
+// Every test record is predicted as the majority class.
+
+val baselinePred =
+  testDF.withColumn(
+    "prediction",
+    lit(majorityLabel)
+  )
+
+
+// Display a sample of baseline predictions
+
+baselinePred
+  .select("label", "prediction")
+  .show(20, false)
+
+
+// -----------------------------------------------------
+// Confusion counts
+// -----------------------------------------------------
+
+val confusionCounts =
+  baselinePred
+    .groupBy("label", "prediction")
+    .count()
+    .orderBy("label", "prediction")
+
+confusionCounts.show(false)
+
+
+// -----------------------------------------------------
+// Evaluation
+// -----------------------------------------------------
+
+val evaluator =
+  new MulticlassClassificationEvaluator()
+    .setLabelCol("label")
+    .setPredictionCol("prediction")
+
+
+// Calculate baseline metrics
+
+val baselineAccuracy =
+  evaluator
+    .setMetricName("accuracy")
+    .evaluate(baselinePred)
+
+val baselineF1 =
+  evaluator
+    .setMetricName("f1")
+    .evaluate(baselinePred)
+
+val baselineRecall =
+  evaluator
+    .setMetricName("weightedRecall")
+    .evaluate(baselinePred)
+
+
+// -----------------------------------------------------
+// Display final baseline results
+// -----------------------------------------------------
+
+println("=== Majority-Class Baseline Results ===")
+println("Majority Label: " + majorityLabel)
+println("Accuracy: " + baselineAccuracy)
+println("Weighted F1: " + baselineF1)
+println("Weighted Recall: " + baselineRecall)
+
+
+
+// =====================================================
+// Girl 4 - Random Forest Training and Predictions
+// =====================================================
+
+// Girl 4 code goes here
+// This section trains the Random Forest model
+// using the feature pipeline and training data.
+
+
+
+// =====================================================
+// Girl 5 - Model Evaluation and Feature Importance
+// =====================================================
+
+// Girl 5 code goes here
+// This section evaluates the Random Forest model,
+// calculates the required metrics,
+// and analyzes feature importance.
