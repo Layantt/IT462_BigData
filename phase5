@@ -136,11 +136,39 @@ println("Weighted Recall: " + baselineRecall)
 
 
 
-// =====================================================
+// =========================================================
 // Girl 5 - Model Evaluation and Feature Importance
-// =====================================================
+// =========================================================
 
-// Girl 5 code goes here
-// This section evaluates the Random Forest model,
-// calculates the required metrics,
-// and analyzes feature importance.
+import org.apache.spark.mllib.evaluation.{BinaryClassificationMetrics, MulticlassMetrics}
+import org.apache.spark.ml.classification.RandomForestClassificationModel
+import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.sql.functions._
+
+// Load test predictions and trained model
+val testPredictions = spark.read.parquet("Phase5_ML/rf_test_predictions.parquet")
+val rfModel = RandomForestClassificationModel.load("Phase5_ML/rf_model_only")
+
+// Evaluate overall accuracy
+val evaluatorAcc = new MulticlassClassificationEvaluator()
+  .setLabelCol("label")
+  .setPredictionCol("prediction")
+  .setMetricName("accuracy")
+
+val accuracy = evaluatorAcc.evaluate(testPredictions)
+
+// Compare against actual Majority-Class Baseline (Section 5.4)
+val baselineAccuracy = 0.9512
+val improvement = (accuracy - baselineAccuracy) * 100
+
+println(f"Random Forest Accuracy     : ${accuracy * 100}%.2f%%")
+println(f"Accuracy Improvement       : +${improvement}%.2f%%")
+
+// Extract and rank top 10 most influential features
+val importances = rfModel.featureImportances.toArray
+val topFeatures = importances.zipWithIndex.sortBy(-_._1).take(10)
+
+println("Feature Index | Importance Score")
+topFeatures.foreach { case (importance, index) =>
+  println(f"Feature $index%-12d | $importance%.6f")
+}
