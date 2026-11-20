@@ -1,122 +1,133 @@
-// =====================================================
-// Phase 5 - Machine Learning with Spark
-// UNSW-NB15 Cyber Attack Detection
-// =====================================================
-
-
-// =====================================================
-// Girl 1 - Data Preparation and Train/Test Split
-// =====================================================
-
-// Girl 1 code goes here
-// This section creates the shared:
-// trainDF
-// testDF
-
-
-// =====================================================
-// Girl 2 - Feature Preparation Pipeline
-// =====================================================
-
-// Girl 2 code goes here
-// This section prepares the ML feature pipeline
-// using the training data and applies it to the test data.
-
-
-
-// =====================================================
-// Girl 3 - Majority-Class Baseline
-// =====================================================
+// =========================================================
+// IT462 - Phase 5 - Machine Learning with Apache Spark MLlib
+// FINAL COMBINED TEAM FILE
+// =========================================================
 
 import org.apache.spark.sql.functions._
+import org.apache.spark.ml.{Pipeline, PipelineStage}
+import org.apache.spark.ml.feature.{StringIndexer, OneHotEncoder, VectorAssembler}
+import org.apache.spark.ml.classification.{RandomForestClassifier, RandomForestClassificationModel}
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.mllib.evaluation.{BinaryClassificationMetrics, MulticlassMetrics}
+import org.apache.spark.ml.attribute.AttributeGroup
 
-// -----------------------------------------------------
-// Identify the majority class from the training set
-// -----------------------------------------------------
+val inputPath = "C:/Users/asanv/Downloads/last semester/Big data system 462/Project/BigData Project/preprocessed_dataset.parquet"
+val outputBase = "C:/IT462/Phase5_ML"
 
-val trainCounts =
-  trainDF
-    .groupBy("label")
-    .count()
-    .orderBy(desc("count"))
+// =========================================================
+// GIRL 1 - Data Preparation and Train/Test Split
+// =========================================================
+val dfRaw = spark.read.parquet(inputPath)
 
+val selectedCols = Array(
+  "Label","proto","service","state","dur","sbytes","dbytes","Spkts","Dpkts",
+  "sttl","dttl","Sload","Dload","total_bytes","total_pkts","byte_ratio"
+)
+
+val numericCols = Array(
+  "dur","sbytes","dbytes","Spkts","Dpkts","sttl","dttl","Sload","Dload",
+  "total_bytes","total_pkts","byte_ratio"
+)
+
+val categoricalCols = Array("proto", "service", "state")
+
+val dfSmall = dfRaw.select(selectedCols.map(col): _*)
+
+val dfTyped = numericCols.foldLeft(
+  dfSmall.withColumn("label", col("Label").cast("double"))
+) { (tempDF, c) =>
+  tempDF.withColumn(c, col(c).cast("double"))
+}
+
+val dfML = dfTyped.filter(col("label").isin(0.0, 1.0)).drop("Label")
+
+println("=== GIRL 1: FULL ML DATASET ===")
+println("Total ML rows: " + dfML.count())
+dfML.groupBy("label").count().orderBy("label").show(false)
+
+val Array(trainDF, testDF) = dfML.randomSplit(Array(0.7, 0.3), seed = 42)
+
+println("Training rows: " + trainDF.count())
+println("Testing rows: " + testDF.count())
+println("Training class distribution:")
+trainDF.groupBy("label").count().orderBy("label").show(false)
+println("Testing class distribution:")
+testDF.groupBy("label").count().orderBy("label").show(false)
+
+trainDF.write.mode("overwrite").parquet(s"$outputBase/train_split.parquet")
+testDF.write.mode("overwrite").parquet(s"$outputBase/test_split.parquet")
+
+// =========================================================
+// GIRL 2 - Feature Preparation and ML Pipeline
+// =========================================================
+val invalidCondition = numericCols.map(c => col(c).isNull || isnan(col(c))).reduce(_ || _)
+val invalidTrain = trainDF.filter(invalidCondition).count()
+val invalidTest = testDF.filter(invalidCondition).count()
+
+println("Invalid numeric training rows: " + invalidTrain)
+println("Invalid numeric testing rows: " + invalidTest)
+require(invalidTrain == 0 && invalidTest == 0, "Invalid numeric values detected")
+
+val indexers = categoricalCols.map(c =>
+  new StringIndexer()
+    .setInputCol(c)
+    .setOutputCol(c + "_index")
+    .setHandleInvalid("keep")
+)
+
+val encoder = new OneHotEncoder()
+  .setInputCols(categoricalCols.map(_ + "_index"))
+  .setOutputCols(categoricalCols.map(_ + "_ohe"))
+  .setHandleInvalid("keep")
+  .setDropLast(true)
+
+val assembler = new VectorAssembler()
+  .setInputCols(numericCols ++ categoricalCols.map(_ + "_ohe"))
+  .setOutputCol("features")
+  .setHandleInvalid("error")
+
+val preprocessingStages: Array[PipelineStage] =
+  indexers.map(x => x: PipelineStage) ++ Array[PipelineStage](encoder, assembler)
+
+val preprocessingPipeline = new Pipeline().setStages(preprocessingStages)
+val preprocessingModel = preprocessingPipeline.fit(trainDF)
+val trainPrepared = preprocessingModel.transform(trainDF)
+val testPrepared = preprocessingModel.transform(testDF)
+
+println("=== GIRL 2: PREPARED SCHEMA ===")
+trainPrepared.select("label", "features").printSchema()
+trainPrepared.select("label", "features").show(5, false)
+testPrepared.select("label", "features").show(5, false)
+
+val featureDimension = trainPrepared.select("features").head().getAs[org.apache.spark.ml.linalg.Vector](0).size
+println("Feature vector dimension: " + featureDimension)
+println("Prepared training rows: " + trainPrepared.count())
+println("Prepared testing rows: " + testPrepared.count())
+
+preprocessingModel.write.overwrite().save(s"$outputBase/feature_pipeline_model")
+
+// =========================================================
+// GIRL 3 - Majority-Class Baseline
+// =========================================================
+val trainCounts = trainDF.groupBy("label").count().orderBy(desc("count"))
 trainCounts.show(false)
 
-
-// The most frequent class is used as the baseline
-// prediction for every test record.
-
-val majorityLabel =
-  trainCounts.first().getDouble(0)
-
+val majorityLabel = trainCounts.first().getDouble(0)
 println("Majority label = " + majorityLabel)
 
+val baselinePred = testDF.withColumn("prediction", lit(majorityLabel))
+baselinePred.select("label", "prediction").show(20, false)
 
-// -----------------------------------------------------
-// Create majority-class baseline predictions
-// -----------------------------------------------------
+val baselineConfusion = baselinePred.groupBy("label", "prediction").count().orderBy("label", "prediction")
+baselineConfusion.show(false)
 
-// Every test record is predicted as the majority class.
+val baselineEvaluator = new MulticlassClassificationEvaluator()
+  .setLabelCol("label")
+  .setPredictionCol("prediction")
 
-val baselinePred =
-  testDF.withColumn(
-    "prediction",
-    lit(majorityLabel)
-  )
-
-
-// Display a sample of baseline predictions
-
-baselinePred
-  .select("label", "prediction")
-  .show(20, false)
-
-
-// -----------------------------------------------------
-// Confusion counts
-// -----------------------------------------------------
-
-val confusionCounts =
-  baselinePred
-    .groupBy("label", "prediction")
-    .count()
-    .orderBy("label", "prediction")
-
-confusionCounts.show(false)
-
-
-// -----------------------------------------------------
-// Evaluation
-// -----------------------------------------------------
-
-val evaluator =
-  new MulticlassClassificationEvaluator()
-    .setLabelCol("label")
-    .setPredictionCol("prediction")
-
-
-// Calculate baseline metrics
-
-val baselineAccuracy =
-  evaluator
-    .setMetricName("accuracy")
-    .evaluate(baselinePred)
-
-val baselineF1 =
-  evaluator
-    .setMetricName("f1")
-    .evaluate(baselinePred)
-
-val baselineRecall =
-  evaluator
-    .setMetricName("weightedRecall")
-    .evaluate(baselinePred)
-
-
-// -----------------------------------------------------
-// Display final baseline results
-// -----------------------------------------------------
+val baselineAccuracy = baselineEvaluator.setMetricName("accuracy").evaluate(baselinePred)
+val baselineF1 = baselineEvaluator.setMetricName("f1").evaluate(baselinePred)
+val baselineRecall = baselineEvaluator.setMetricName("weightedRecall").evaluate(baselinePred)
 
 println("=== Majority-Class Baseline Results ===")
 println("Majority Label: " + majorityLabel)
@@ -124,81 +135,57 @@ println("Accuracy: " + baselineAccuracy)
 println("Weighted F1: " + baselineF1)
 println("Weighted Recall: " + baselineRecall)
 
-
-
-// =====================================================
-// Girl 4 - Random Forest Training and Predictions
-// =====================================================
-
-import org.apache.spark.ml.{Pipeline, PipelineStage}
-import org.apache.spark.ml.classification.{RandomForestClassifier, RandomForestClassificationModel}
-
-// Reuse the fitted preprocessing stages created by Girl 2.
-// No re-splitting or re-fitting categorical encoders is performed.
-val g4RF = new RandomForestClassifier()
+// =========================================================
+// GIRL 4 - Random Forest Training and Prediction
+// =========================================================
+val rf = new RandomForestClassifier()
   .setLabelCol("label")
   .setFeaturesCol("features")
   .setNumTrees(100)
   .setSeed(42)
 
-val g4Stages: Array[PipelineStage] =
-  g2PipelineModel.stages.map(stage => stage: PipelineStage) ++ Array[PipelineStage](g4RF)
-val g4Pipeline = new Pipeline().setStages(g4Stages)
+val finalStages: Array[PipelineStage] =
+  preprocessingModel.stages.map(_.asInstanceOf[PipelineStage]) ++ Array[PipelineStage](rf)
 
-// Train the classifier using the same saved splits used by Girl 2.
-val g4Model = g4Pipeline.fit(g2TrainDF)
-val g4TrainPred = g4Model.transform(g2TrainDF)
-val g4TestPred = g4Model.transform(g2TestDF)
+val finalPipeline = new Pipeline().setStages(finalStages)
+println("Starting Random Forest Training...")
+val finalModel = finalPipeline.fit(trainDF)
+println("Random Forest Training Completed Successfully!")
 
-val g4RFTrained = g4Model.stages.last.asInstanceOf[RandomForestClassificationModel]
-println("Number of trained trees: " + g4RFTrained.getNumTrees)
-println("Feature dimensions: " + g4RFTrained.numFeatures)
+val rfModel = finalModel.stages.last.asInstanceOf[RandomForestClassificationModel]
+println("Number of trained trees: " + rfModel.getNumTrees)
+println("Number of features: " + rfModel.numFeatures)
 
-// Sample predictions: all records, then rows with actual label = Attack (1).
-g4TestPred.select("label", "prediction", "probability").show(20, false)
-g4TestPred.filter("label = 1.0")
-  .select("label", "prediction", "probability")
-  .show(20, false)
+val trainPred = finalModel.transform(trainDF)
+val testPred = finalModel.transform(testDF)
 
-// These output paths match the paths read by Girl 5 below.
-// Run from a working directory containing a Phase5_ML subfolder.
-val g4OutputDir = "Phase5_ML"
-g4Model.write.overwrite().save(s"$g4OutputDir/rf_full_pipeline_model")
-g4RFTrained.write.overwrite().save(s"$g4OutputDir/rf_model_only")
+testPred.select("label", "prediction", "probability").show(20, false)
+testPred.filter(col("label") === 1.0).select("label", "prediction", "probability").show(20, false)
 
-val g4PredictionCols = Seq("label", "prediction", "probability", "rawPrediction")
-g4TrainPred.select(g4PredictionCols.map(org.apache.spark.sql.functions.col): _*)
-  .write.mode("overwrite").parquet(s"$g4OutputDir/rf_train_predictions.parquet")
-g4TestPred.select(g4PredictionCols.map(org.apache.spark.sql.functions.col): _*)
-  .write.mode("overwrite").parquet(s"$g4OutputDir/rf_test_predictions.parquet")
+finalModel.write.overwrite().save(s"$outputBase/rf_full_pipeline_model")
+rfModel.write.overwrite().save(s"$outputBase/rf_model_only")
 
-println("Girl 4 completed: Random Forest model and train/test predictions saved.")
-
+testPred.select("label", "prediction", "probability", "rawPrediction")
+  .write.mode("overwrite").parquet(s"$outputBase/rf_test_predictions.parquet")
+trainPred.select("label", "prediction", "probability", "rawPrediction")
+  .write.mode("overwrite").parquet(s"$outputBase/rf_train_predictions.parquet")
 
 // =========================================================
-// Girl 5 - Model Evaluation and Feature Importance
+// GIRL 5 - Model Evaluation and Feature Importance
 // =========================================================
-
-import org.apache.spark.mllib.evaluation.{BinaryClassificationMetrics, MulticlassMetrics}
-import org.apache.spark.ml.PipelineModel
-import org.apache.spark.ml.classification.RandomForestClassificationModel
-import org.apache.spark.ml.feature.{OneHotEncoderModel, StringIndexerModel}
-import org.apache.spark.sql.functions._
-
-// 1. Load persisted training & test predictions, trained RF model, and feature pipeline
-val trainPred = spark.read.parquet("Phase5_ML/rf_train_predictions.parquet")
-val testPred  = spark.read.parquet("Phase5_ML/rf_test_predictions.parquet")
-val rfModel   = RandomForestClassificationModel.load("Phase5_ML/rf_model_only")
-val featModel = PipelineModel.load("Phase5_ML/feature_pipeline_model")
-
-// 2. Helper function to compute Accuracy, Weighted Precision, Recall, F1-Score, and ROC-AUC
 def evaluateSplit(df: org.apache.spark.sql.DataFrame, splitName: String): Double = {
-  val predAndLabels = df.select(col("prediction").cast("double"), col("label").cast("double")).as[(Double, Double)].rdd
+  val predAndLabels = df
+    .select(col("prediction").cast("double"), col("label").cast("double"))
+    .as[(Double, Double)].rdd
+
   val multi = new MulticlassMetrics(predAndLabels)
 
   val extractProb1 = udf((v: org.apache.spark.ml.linalg.Vector) => v(1))
-  val scoreAndLabels = df.withColumn("prob1", extractProb1(col("probability")))
-    .select(col("prob1").cast("double"), col("label").cast("double")).as[(Double, Double)].rdd
+  val scoreAndLabels = df
+    .withColumn("prob1", extractProb1(col("probability")))
+    .select(col("prob1").cast("double"), col("label").cast("double"))
+    .as[(Double, Double)].rdd
+
   val binary = new BinaryClassificationMetrics(scoreAndLabels)
 
   println("=== " + splitName + " METRICS ===")
@@ -207,39 +194,60 @@ def evaluateSplit(df: org.apache.spark.sql.DataFrame, splitName: String): Double
   println(String.format("Weighted Recall   : %.2f%%", Double.box(multi.weightedRecall * 100)))
   println(String.format("Weighted F1-Score : %.2f%%", Double.box(multi.weightedFMeasure * 100)))
   println(String.format("ROC-AUC           : %.2f%%", Double.box(binary.areaUnderROC() * 100)))
+
   multi.accuracy
 }
 
 val trainAcc = evaluateSplit(trainPred, "TRAINING SET")
-val testAcc  = evaluateSplit(testPred, "TEST SET")
+val testAcc = evaluateSplit(testPred, "TEST SET")
 
-// 3. Dynamic comparison against Majority-Class Baseline (Section 5.4: 95.12%)
-val majorityLabel = trainPred.groupBy("label").count().orderBy(desc("count")).first().getDouble(0)
-val baselineAcc = testPred.filter(col("label") === majorityLabel).count().toDouble / testPred.count().toDouble
-val improvement = (testAcc - baselineAcc) * 100
-println(String.format("Baseline: %.2f%% | Test: %.2f%% | Improvement: +%.2f%%",
-  Double.box(baselineAcc * 100), Double.box(testAcc * 100), Double.box(improvement)))
+val dynamicMajorityLabel = trainPred.groupBy("label").count().orderBy(desc("count")).first().getDouble(0)
+val dynamicBaselineAcc = testPred.filter(col("label") === dynamicMajorityLabel).count().toDouble / testPred.count().toDouble
+val improvement = (testAcc - dynamicBaselineAcc) * 100
 
-// 4. Confusion Matrix (TN, FP, FN, TP) on Test Set
-val cm = testPred.groupBy("label", "prediction").count().collect().map(r => ((r.getDouble(0), r.getDouble(1)), r.getLong(2))).toMap
-println("TN: " + cm.getOrElse((0.0, 0.0), 0L) + " | FP: " + cm.getOrElse((0.0, 1.0), 0L) +
-        " | FN: " + cm.getOrElse((1.0, 0.0), 0L) + " | TP: " + cm.getOrElse((1.0, 1.0), 0L))
+println(String.format(
+  "Baseline: %.2f%% | Test: %.2f%% | Improvement: +%.2f percentage points",
+  Double.box(dynamicBaselineAcc * 100),
+  Double.box(testAcc * 100),
+  Double.box(improvement)
+))
 
-// 5. Reconstruct all 179 feature names from the fitted pipeline
-val numericCols = Array("dur", "sbytes", "dbytes", "Spkts", "Dpkts", "sttl", "dttl", "Sload", "Dload", "total_bytes", "total_pkts", "byte_ratio")
-val indexers = featModel.stages.collect { case s: StringIndexerModel => s }
-val oheModel = featModel.stages.collect { case o: OneHotEncoderModel => o }.head
-val catExpandedNames = indexers.zip(oheModel.categorySizes).flatMap { case (idxModel, size) =>
-  val colName = idxModel.getInputCol
-  val labels = idxModel.labelsArray(0)
-  (0 until size).map(i => colName + "_ohe[" + (if (i < labels.length) labels(i) else "unknown") + "]")
-}
-val allFeatureNames = numericCols ++ catExpandedNames
+val cm = testPred.groupBy("label", "prediction").count().collect()
+  .map(r => ((r.getDouble(0), r.getDouble(1)), r.getLong(2))).toMap
 
-// 6. Extract and rank top 10 most influential features with exact names
+val tn = cm.getOrElse((0.0, 0.0), 0L)
+val fp = cm.getOrElse((0.0, 1.0), 0L)
+val fn = cm.getOrElse((1.0, 0.0), 0L)
+val tp = cm.getOrElse((1.0, 1.0), 0L)
+
+println("=== TEST CONFUSION MATRIX ===")
+println("TN: " + tn + " | FP: " + fp + " | FN: " + fn + " | TP: " + tp)
+
+// Exact feature names from Spark metadata to avoid OHE index/name misalignment.
+val featureGroup = AttributeGroup.fromStructField(trainPrepared.schema("features"))
+val featureNames: Array[String] = featureGroup.attributes
+  .getOrElse(Array.empty)
+  .zipWithIndex
+  .map { case (attr, idx) => attr.name.getOrElse("Feature_" + idx) }
+
+println("Feature-name count: " + featureNames.length)
+println("Model feature count: " + rfModel.numFeatures)
+
 println("=== TOP 10 FEATURE IMPORTANCES ===")
-rfModel.featureImportances.toArray.zipWithIndex.sortBy(-_._1).take(10).zipWithIndex.foreach { case ((imp, idx), rank) =>
-  val fName = if (idx < allFeatureNames.length) allFeatureNames(idx) else "Feature_" + idx
-  println(String.format("%-2d | Index %-3d | %-20s | %.6f (%.2f%%)",
-    Int.box(rank + 1), Int.box(idx), fName, Double.box(imp), Double.box(imp * 100)))
+rfModel.featureImportances.toArray.zipWithIndex.sortBy(-_._1).take(10).zipWithIndex.foreach {
+  case ((importance, featureIndex), rank) =>
+    val featureName =
+      if (featureIndex < featureNames.length) featureNames(featureIndex)
+      else "Feature_" + featureIndex
+
+    println(String.format(
+      "%-2d | Index %-3d | %-30s | %.6f (%.2f%%)",
+      Int.box(rank + 1),
+      Int.box(featureIndex),
+      featureName,
+      Double.box(importance),
+      Double.box(importance * 100)
+    ))
 }
+
+println("=== PHASE 5 COMPLETED SUCCESSFULLY ===")
