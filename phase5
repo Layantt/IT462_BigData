@@ -141,34 +141,66 @@ println("Weighted Recall: " + baselineRecall)
 // =========================================================
 
 import org.apache.spark.mllib.evaluation.{BinaryClassificationMetrics, MulticlassMetrics}
+import org.apache.spark.ml.PipelineModel
 import org.apache.spark.ml.classification.RandomForestClassificationModel
-import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
+import org.apache.spark.ml.feature.{OneHotEncoderModel, StringIndexerModel}
 import org.apache.spark.sql.functions._
 
-// Load test predictions and trained model
-val testPredictions = spark.read.parquet("Phase5_ML/rf_test_predictions.parquet")
-val rfModel = RandomForestClassificationModel.load("Phase5_ML/rf_model_only")
+// 1. Load persisted training & test predictions, trained RF model, and feature pipeline
+val trainPred = spark.read.parquet("Phase5_ML/rf_train_predictions.parquet")
+val testPred  = spark.read.parquet("Phase5_ML/rf_test_predictions.parquet")
+val rfModel   = RandomForestClassificationModel.load("Phase5_ML/rf_model_only")
+val featModel = PipelineModel.load("Phase5_ML/feature_pipeline_model")
 
-// Evaluate overall accuracy
-val evaluatorAcc = new MulticlassClassificationEvaluator()
-  .setLabelCol("label")
-  .setPredictionCol("prediction")
-  .setMetricName("accuracy")
+// 2. Helper function to compute Accuracy, Weighted Precision, Recall, F1-Score, and ROC-AUC
+def evaluateSplit(df: org.apache.spark.sql.DataFrame, splitName: String): Double = {
+  val predAndLabels = df.select(col("prediction").cast("double"), col("label").cast("double")).as[(Double, Double)].rdd
+  val multi = new MulticlassMetrics(predAndLabels)
 
-val accuracy = evaluatorAcc.evaluate(testPredictions)
+  val extractProb1 = udf((v: org.apache.spark.ml.linalg.Vector) => v(1))
+  val scoreAndLabels = df.withColumn("prob1", extractProb1(col("probability")))
+    .select(col("prob1").cast("double"), col("label").cast("double")).as[(Double, Double)].rdd
+  val binary = new BinaryClassificationMetrics(scoreAndLabels)
 
-// Compare against actual Majority-Class Baseline (Section 5.4)
-val baselineAccuracy = 0.9512
-val improvement = (accuracy - baselineAccuracy) * 100
+  println("=== " + splitName + " METRICS ===")
+  println(String.format("Accuracy          : %.2f%%", Double.box(multi.accuracy * 100)))
+  println(String.format("Weighted Precision: %.2f%%", Double.box(multi.weightedPrecision * 100)))
+  println(String.format("Weighted Recall   : %.2f%%", Double.box(multi.weightedRecall * 100)))
+  println(String.format("Weighted F1-Score : %.2f%%", Double.box(multi.weightedFMeasure * 100)))
+  println(String.format("ROC-AUC           : %.2f%%", Double.box(binary.areaUnderROC() * 100)))
+  multi.accuracy
+}
 
-println(f"Random Forest Accuracy     : ${accuracy * 100}%.2f%%")
-println(f"Accuracy Improvement       : +${improvement}%.2f%%")
+val trainAcc = evaluateSplit(trainPred, "TRAINING SET")
+val testAcc  = evaluateSplit(testPred, "TEST SET")
 
-// Extract and rank top 10 most influential features
-val importances = rfModel.featureImportances.toArray
-val topFeatures = importances.zipWithIndex.sortBy(-_._1).take(10)
+// 3. Dynamic comparison against Majority-Class Baseline (Section 5.4: 95.12%)
+val majorityLabel = trainPred.groupBy("label").count().orderBy(desc("count")).first().getDouble(0)
+val baselineAcc = testPred.filter(col("label") === majorityLabel).count().toDouble / testPred.count().toDouble
+val improvement = (testAcc - baselineAcc) * 100
+println(String.format("Baseline: %.2f%% | Test: %.2f%% | Improvement: +%.2f%%",
+  Double.box(baselineAcc * 100), Double.box(testAcc * 100), Double.box(improvement)))
 
-println("Feature Index | Importance Score")
-topFeatures.foreach { case (importance, index) =>
-  println(f"Feature $index%-12d | $importance%.6f")
+// 4. Confusion Matrix (TN, FP, FN, TP) on Test Set
+val cm = testPred.groupBy("label", "prediction").count().collect().map(r => ((r.getDouble(0), r.getDouble(1)), r.getLong(2))).toMap
+println("TN: " + cm.getOrElse((0.0, 0.0), 0L) + " | FP: " + cm.getOrElse((0.0, 1.0), 0L) +
+        " | FN: " + cm.getOrElse((1.0, 0.0), 0L) + " | TP: " + cm.getOrElse((1.0, 1.0), 0L))
+
+// 5. Reconstruct all 179 feature names from the fitted pipeline
+val numericCols = Array("dur", "sbytes", "dbytes", "Spkts", "Dpkts", "sttl", "dttl", "Sload", "Dload", "total_bytes", "total_pkts", "byte_ratio")
+val indexers = featModel.stages.collect { case s: StringIndexerModel => s }
+val oheModel = featModel.stages.collect { case o: OneHotEncoderModel => o }.head
+val catExpandedNames = indexers.zip(oheModel.categorySizes).flatMap { case (idxModel, size) =>
+  val colName = idxModel.getInputCol
+  val labels = idxModel.labelsArray(0)
+  (0 until size).map(i => colName + "_ohe[" + (if (i < labels.length) labels(i) else "unknown") + "]")
+}
+val allFeatureNames = numericCols ++ catExpandedNames
+
+// 6. Extract and rank top 10 most influential features with exact names
+println("=== TOP 10 FEATURE IMPORTANCES ===")
+rfModel.featureImportances.toArray.zipWithIndex.sortBy(-_._1).take(10).zipWithIndex.foreach { case ((imp, idx), rank) =>
+  val fName = if (idx < allFeatureNames.length) allFeatureNames(idx) else "Feature_" + idx
+  println(String.format("%-2d | Index %-3d | %-20s | %.6f (%.2f%%)",
+    Int.box(rank + 1), Int.box(idx), fName, Double.box(imp), Double.box(imp * 100)))
 }
