@@ -130,10 +130,49 @@ println("Weighted Recall: " + baselineRecall)
 // Girl 4 - Random Forest Training and Predictions
 // =====================================================
 
-// Girl 4 code goes here
-// This section trains the Random Forest model
-// using the feature pipeline and training data.
+import org.apache.spark.ml.{Pipeline, PipelineStage}
+import org.apache.spark.ml.classification.{RandomForestClassifier, RandomForestClassificationModel}
 
+// Reuse the fitted preprocessing stages created by Girl 2.
+// No re-splitting or re-fitting categorical encoders is performed.
+val g4RF = new RandomForestClassifier()
+  .setLabelCol("label")
+  .setFeaturesCol("features")
+  .setNumTrees(100)
+  .setSeed(42)
+
+val g4Stages: Array[PipelineStage] =
+  g2PipelineModel.stages.map(stage => stage: PipelineStage) ++ Array[PipelineStage](g4RF)
+val g4Pipeline = new Pipeline().setStages(g4Stages)
+
+// Train the classifier using the same saved splits used by Girl 2.
+val g4Model = g4Pipeline.fit(g2TrainDF)
+val g4TrainPred = g4Model.transform(g2TrainDF)
+val g4TestPred = g4Model.transform(g2TestDF)
+
+val g4RFTrained = g4Model.stages.last.asInstanceOf[RandomForestClassificationModel]
+println("Number of trained trees: " + g4RFTrained.getNumTrees)
+println("Feature dimensions: " + g4RFTrained.numFeatures)
+
+// Sample predictions: all records, then rows with actual label = Attack (1).
+g4TestPred.select("label", "prediction", "probability").show(20, false)
+g4TestPred.filter("label = 1.0")
+  .select("label", "prediction", "probability")
+  .show(20, false)
+
+// These output paths match the paths read by Girl 5 below.
+// Run from a working directory containing a Phase5_ML subfolder.
+val g4OutputDir = "Phase5_ML"
+g4Model.write.overwrite().save(s"$g4OutputDir/rf_full_pipeline_model")
+g4RFTrained.write.overwrite().save(s"$g4OutputDir/rf_model_only")
+
+val g4PredictionCols = Seq("label", "prediction", "probability", "rawPrediction")
+g4TrainPred.select(g4PredictionCols.map(org.apache.spark.sql.functions.col): _*)
+  .write.mode("overwrite").parquet(s"$g4OutputDir/rf_train_predictions.parquet")
+g4TestPred.select(g4PredictionCols.map(org.apache.spark.sql.functions.col): _*)
+  .write.mode("overwrite").parquet(s"$g4OutputDir/rf_test_predictions.parquet")
+
+println("Girl 4 completed: Random Forest model and train/test predictions saved.")
 
 
 // =========================================================
